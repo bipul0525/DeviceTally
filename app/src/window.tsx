@@ -73,7 +73,7 @@ export function explain(error: string): { title: string; detail: string; link?: 
       link: ['Raise the limit (Workers Paid, $5/month)', 'https://dash.cloudflare.com/?to=/:account/workers/plans'],
     }
   }
-  if (error === 'server_404') return { title: 'Your server needs an update', detail: 'This screen needs a newer server. Settings → Server → Update server.' }
+  if (error === 'server_404') return { title: 'Your server needs an update', detail: 'This screen needs a newer server. See Settings → Server.' }
   if (/^server_5\d\d$|^server_error$/.test(error)) return { title: 'Your server had a problem', detail: 'It’s usually temporary. Try again in a minute; if it keeps happening, update the server (Settings → Server).' }
   return { title: 'Could not load this', detail: error }
 }
@@ -985,6 +985,7 @@ function AdminSettings({ openPrompts }: { openPrompts: () => void }) {
 
 /** Admin, stopping DeviceTally: delete the server and database in Cloudflare and the tracking here. */
 function DeleteEverything() {
+  const meta = useLoad<{ host?: string }>('/meta')
   const [open, setOpen] = useState(false)
   const [token, setToken] = useState('')
   const [confirmText, setConfirm] = useState('')
@@ -999,6 +1000,11 @@ function DeleteEverything() {
     e.preventDefault(); setBusy(true); setErr(''); setLog([])
     try { await invoke('delete_server', { cfToken: token }); location.reload() } catch (x) { setErr(String(x)) } finally { setBusy(false) }
   }
+  if (meta.data?.host === 'node') return (
+    <section class="section"><h2>Stop using DeviceTally</h2>
+      <p class="hint">Your server runs on your own machine. Export your data first if you want a copy, then stop it and delete its data there: <code>docker compose down -v</code></p>
+    </section>
+  )
   return (
     <section class="section"><h2>Stop using DeviceTally</h2>
       <div class="group">
@@ -1092,8 +1098,11 @@ function UpdateServerForm({ close, done }: { close: () => void; done: () => void
   )
 }
 
+/** How to update a server that runs outside Cloudflare (Docker / Node): the app can't do it from here. */
+const SELF_HOSTED_UPDATE = 'In the folder you run it from: git pull && docker compose up -d --build'
+
 function ServerGroup() {
-  const meta = useLoad<{ version: string }>('/meta')
+  const meta = useLoad<{ version: string; host?: string }>('/meta')
   const [bundled, setBundled] = useState('')
   const [open, setOpen] = useState(false)
   const [msg, setMsg] = useState('')
@@ -1104,7 +1113,8 @@ function ServerGroup() {
     <section class="section"><h2>Server</h2>
       <div class="group">
         <div class="field"><span>Server version</span><span class="val">{meta.data?.version ?? (meta.error ? 'older version' : '…')}{outdated ? ` · ${bundled} available` : meta.data ? ' · up to date' : ''}</span></div>
-        {!open && <div class="field"><span>{outdated ? `Update to ${bundled}` : 'Reinstall the server code'}</span><button class={outdated ? 'btn primary' : 'btn'} onClick={() => { setOpen(true); setMsg('') }}>Update server</button></div>}
+        {meta.data?.host === 'node' ? <div class="field"><span>{outdated ? `Update to ${bundled}` : 'Update'}</span><span class="val">{SELF_HOSTED_UPDATE}</span></div>
+        : !open && <div class="field"><span>{outdated ? `Update to ${bundled}` : 'Reinstall the server code'}</span><button class={outdated ? 'btn primary' : 'btn'} onClick={() => { setOpen(true); setMsg('') }}>Update server</button></div>}
         {open && <UpdateServerForm close={() => setOpen(false)} done={() => { setOpen(false); setMsg('Server updated.'); meta.reload(); window.dispatchEvent(new Event('dt:server-updated')) }} />}
       </div>
       {msg && <p class="hint" role="status">{msg}</p>}
@@ -1798,12 +1808,12 @@ function StorageTab() {
 // ---------- Window shell ----------
 // Admin: the app carries a newer server than the one running? Say so plainly, with the fix.
 function ServerBanner() {
-  const [state, setState] = useState<{ server: string; bundled: string } | null>(null)
+  const [state, setState] = useState<{ server: string; bundled: string; host?: string } | null>(null)
   const [open, setOpen] = useState(false)
   const [done, setDone] = useState(false)
   useEffect(() => {
     invoke<string>('bundled_server_version').then((b) =>
-      api<{ version: string }>('/meta').then((m) => setState({ server: m.version, bundled: b }), () => setState({ server: '', bundled: b })))
+      api<{ version: string; host?: string }>('/meta').then((m) => setState({ server: m.version, bundled: b, host: m.host }), () => setState({ server: '', bundled: b })))
     // Updated from Settings → Server: the banner goes away.
     const hide = () => setState(null)
     window.addEventListener('dt:server-updated', hide)
@@ -1815,9 +1825,10 @@ function ServerBanner() {
     <div class="banner" role="status">
       <div style={{ flex: 1 }}>
         <span>{state.server ? `Your server is version ${state.server}; this app needs ${state.bundled}.` : `Your server is older than this app (${state.bundled}).`} Some screens can't load until it's updated.</span>
+        {state.host === 'node' && <span> {SELF_HOSTED_UPDATE}</span>}
         {open && <UpdateServerForm close={() => setOpen(false)} done={() => setDone(true)} />}
       </div>
-      {!open && <button class="btn primary" onClick={() => setOpen(true)}>Update server</button>}
+      {!open && state.host !== 'node' && <button class="btn primary" onClick={() => setOpen(true)}>Update server</button>}
     </div>
   )
 }

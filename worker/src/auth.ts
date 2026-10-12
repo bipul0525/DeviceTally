@@ -2,7 +2,7 @@ import type { Context, MiddlewareHandler } from 'hono'
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie'
 import { hashPassword, randomToken, sha256, verifyPassword } from './crypto'
 
-export type Env = { Bindings: { DB: D1Database; SETUP_TOKEN?: string; RELEASE_REPO?: string }; Variables: { deviceId: string } }
+export type Env = { Bindings: { DB: D1Database; SETUP_TOKEN?: string; RELEASE_REPO?: string; HOST?: string }; Variables: { deviceId: string } }
 
 const COOKIE = 'dt_session'
 const SESSION_MS = 30 * 24 * 3600_000

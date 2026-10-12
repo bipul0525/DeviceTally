@@ -28,7 +28,16 @@ export async function verifyPassword(password: string, stored: string) {
   if (scheme !== 'pbkdf2') return false
   const got = new Uint8Array(await pbkdf2(password, fromB64url(salt), Number(it)))
   const want = fromB64url(hash)
-  return got.length === want.length && (crypto.subtle as SubtleCrypto & { timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean }).timingSafeEqual(got, want)
+  return got.length === want.length && sameBytes(got, want)
+}
+
+/** Constant-time comparison: Cloudflare's crypto.subtle.timingSafeEqual, or the same in plain code on Node. */
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual?(a: Uint8Array, b: Uint8Array): boolean }
+  if (subtle.timingSafeEqual) return subtle.timingSafeEqual(a, b)
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i]
+  return diff === 0
 }
 
 // Enrollment codes: no 0/O/1/I/L to avoid misreading.

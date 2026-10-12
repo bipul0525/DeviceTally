@@ -1,0 +1,16 @@
+# DeviceTally server: docker compose up -d, then read the setup token with: docker compose logs
+# Put it behind HTTPS (Caddy, Nginx, Traefik, or your host's) before computers outside your network join.
+services:
+  devicetally:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - devicetally-data:/data
+    environment:
+      # SETUP_TOKEN: choose one, or leave it out and one is made and printed in the log.
+      RELEASE_REPO: bipul0525/devicetally
+
+volumes:
+  devicetally-data:

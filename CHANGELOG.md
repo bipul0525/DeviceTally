@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Run the server without Cloudflare:** the same server runs with Docker or Node.js, with its data in one SQLite file (a VPS, a home server, Railway, Fly.io, InstaCloud). `docker compose up -d` in `worker/`; guide in [docs/self-hosting.md](docs/self-hosting.md). On such a server the app shows how to update or remove it instead of the Cloudflare buttons.
+- **Why a computer went silent:** the tracker records when and why it couldn't reach the server (no internet, refused on this computer, a different server answered, a proxy or firewall, DNS blocked), hosts-file edits with their lines and time, DNS blocks, a proxy in use, removed hooks or background check-in (put back), and pause/resume. The admin sees them as badges and an **Events** list under Devices, with a reason next to a silent computer, and gets a notification when tracking is blocked or removed. `devicetally status` shows an ongoing outage.
+- When this computer's lookup gives the server an address that refuses, the tracker also tries 1.1.1.1's answer (the certificate is still checked).
+- Overview hints at a computer that is online on a weekday afternoon but has no usage today, though it normally has plenty.
+
 ## 1.6.3
 
 - **Blocking the server in the hosts file no longer stops tracking:** when a computer's own lookup sends the server's address nowhere (a line like `0.0.0.0 your-server` in /etc/hosts), the tracker and the app ask Cloudflare's DNS (1.1.1.1, over HTTPS) for the real address. The server's certificate is still checked.

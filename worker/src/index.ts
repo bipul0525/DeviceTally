@@ -39,7 +39,7 @@ app.get('/app', (c) => appScript(c.req.url))
 app.get('/dl/tokscale/:version/:pkg', (c) => tokscaleDownload(c.req.param('version'), c.req.param('pkg').replace(/\.tgz$/, ''), c.executionCtx))
 app.get('/dl/:name', (c) => download(c.req.param('name'), c.env.RELEASE_REPO, c.executionCtx))
 app.get('/i/:code', (c) => installScript(c.req.url, c.req.header('user-agent') ?? '', c.env.RELEASE_REPO))
-app.get('/api/meta', async (c) => c.json({ version: SERVER_VERSION, release_repo: c.env.RELEASE_REPO || null, release_available: await releaseAvailable(c.env.RELEASE_REPO) }))
+app.get('/api/meta', async (c) => c.json({ version: SERVER_VERSION, host: c.env.HOST || 'cloudflare', release_repo: c.env.RELEASE_REPO || null, release_available: await releaseAvailable(c.env.RELEASE_REPO) }))
 app.get('/', (c) => c.text(`DeviceTally server. Install the app:  curl -fsSL ${new URL(c.req.url).origin}/app | sh\n`))
 // Lets the app choose between creating the admin login and signing in.
 app.get('/api/auth/state', async (c) => c.json({ setup_needed: !(await c.env.DB.prepare('SELECT 1 FROM owner WHERE id = 1').first()) }))

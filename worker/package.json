@@ -9,7 +9,10 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "setup": "node scripts/setup.mjs",
-    "update": "git pull --ff-only && npm run deploy"
+    "update": "git pull --ff-only && npm run deploy",
+    "test:node": "vitest run --config vitest.node.config.ts",
+    "build:node": "esbuild src/node.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs",
+    "start": "node --disable-warning=ExperimentalWarning dist/server.mjs"
   },
   "dependencies": {
     "hono": "^4.13.12"
@@ -17,6 +20,9 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20261002.1",
+    "@hono/node-server": "^2.1.4",
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11",
     "wrangler": "^4.147.0"

@@ -50,7 +50,9 @@ try {
 
 const CODE = /^[2-9A-HJKMNP-Z]{6}$/
 
-const cache = () => (caches as unknown as { default: Cache }).default
+// Cloudflare's edge cache; outside Cloudflare (Node) there is none, so downloads go to GitHub/npm each time.
+const none = { match: async () => undefined, put: async () => {} } as unknown as Cache
+const cache = () => (typeof caches === 'undefined' ? none : (caches as unknown as { default: Cache }).default)
 const ASSET = /^(devicetally_(darwin|linux|windows)_(amd64|arm64)(\.exe)?|checksums\.txt|DeviceTally_(aarch64|x64)\.app\.tar\.gz|DeviceTally_amd64\.AppImage)$/
 
 /** Latest release tag of `repo`, cached for 5 minutes (null if none is public). */

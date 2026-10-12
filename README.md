@@ -7,12 +7,12 @@
 <p align="center">
   <a href="https://github.com/bipul0525/devicetally/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/bipul0525/devicetally?label=download&color=0a84ff"></a>
   <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-supported-30d158">
-  <img alt="Self-hosted on Cloudflare" src="https://img.shields.io/badge/self--hosted-Cloudflare%20free%20plan-f38020">
+  <img alt="Self-hosted on Cloudflare or Docker" src="https://img.shields.io/badge/self--hosted-Cloudflare%20free%20plan%20%C2%B7%20Docker-f38020">
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-lightgrey"></a>
 </p>
 
 <p align="center"><b>AI coding usage, agent status, system stats and storage — for every Mac, Windows and Linux computer you use.</b><br>
-Claude Code, Codex, OpenCode and Kimi usage · know when your agent is done · a menu bar you design · storage cleanup · free and private on your own Cloudflare account.</p>
+Claude Code, Codex, OpenCode and Kimi usage · know when your agent is done · a menu bar you design · storage cleanup · free and private on your own Cloudflare account or server.</p>
 
 **DeviceTally** is a free, open-source, self-hosted **menu-bar app for all your computers**:
 
@@ -20,9 +20,9 @@ Claude Code, Codex, OpenCode and Kimi usage · know when your agent is done · a
 - **Agent status:** know when your AI coding agent is working, needs you, or is done, with Mac notifications and sounds.
 - **System monitor:** CPU, temperature, memory, network, disk and battery, each in its own menu-bar item with a detailed panel, like Stats.
 - **Storage:** see what AI models, developer caches and big folders use, and clear caches safely.
-- **Device health:** every computer's status, disk forecast and tracking at a glance.
+- **Device health:** every computer's status, disk forecast and tracking at a glance, and why a computer went silent.
 
-It runs on your own free Cloudflare Worker, so your data stays yours. More tools are on the way.
+It runs on your own free Cloudflare Worker, or on any server with Docker, so your data stays yours. More tools are on the way.
 
 <p align="center">
   <a href="#install">Install</a> ·
@@ -112,7 +112,7 @@ What AI tools (Ollama models, Hugging Face, Claude Code, Cursor…), developer c
 <td valign="top">
 
 ### Device health
-Every computer shows **Online / Idle / Offline**, whether it's 🔒 locked, tracking problems (hooks missing, paused, transcripts deleted), its disk with a *"full in about N weeks"* estimate, and the projects it's meant for.
+Every computer shows **Online / Idle / Offline**, whether it's 🔒 locked, tracking problems (hooks missing, paused, transcripts deleted, the server blocked in its hosts file or DNS), its disk with a *"full in about N weeks"* estimate, and the projects it's meant for. An **Events** list says when and why a computer couldn't reach the server, and the admin gets a notification when tracking is blocked or removed.
 
 </td>
 <td valign="top">
@@ -153,7 +153,7 @@ The admin can collect prompt text (off by default) and browse it by day, with th
 | Menu bar app | ✅ | — (CLI) | — (CLI) | ✅ |
 | Agent status: working / needs you / done | ✅ | — | — | — |
 | CPU, memory, network, disk, battery in the menu bar | ✅ | — | — | ✅ |
-| Your data stays in your account | ✅ (your Cloudflare) | ✅ (local) | ✅ (local) | ✅ (local) |
+| Your data stays in your account | ✅ (your Cloudflare or server) | ✅ (local) | ✅ (local) | ✅ (local) |
 
 DeviceTally uses tokscale for the other tools and matches ccusage's cost per model. If you use one computer and want a quick terminal report, ccusage is great. DeviceTally is for **several computers, a team of your own devices, and a menu bar that tells you when the agent is done**.
 
@@ -162,7 +162,7 @@ DeviceTally uses tokscale for the other tools and matches ccusage's cost per mod
 <p align="center"><img src="docs/assets/how-it-works.svg" alt="Each computer's tracker sends usage to your own Cloudflare Worker and D1 database; the menu-bar app shows it" width="860"></p>
 
 - **A small tracker on each computer.** Claude Code hooks only write a line locally (about 1 ms), and uploads happen in the background, so Claude Code never slows down. Offline? Nothing is lost; it's sent later.
-- **Your own server.** A Cloudflare Worker with a D1 database in **your** free Cloudflare account. The app creates it for you in about 3 minutes, with no terminal needed. Nobody else holds your data.
+- **Your own server.** A Cloudflare Worker with a D1 database in **your** free Cloudflare account. The app creates it for you in about 3 minutes, with no terminal needed. Or run the same server with Docker on a VPS, a home server, Railway or Fly.io ([guide](docs/self-hosting.md)). Nobody else holds your data.
 - **Filtered on your computer first.** Only accounts you approve are tracked, secrets are redacted, and prompt text is only collected if you turn it on.
 
 ## Install
@@ -254,7 +254,7 @@ Then open the **Menu bar** tab to design your menu-bar item. Using DeviceTally's
 
 <details><summary><b>Is it free?</b></summary>
 
-Yes. DeviceTally is MIT-licensed, and it runs on Cloudflare's free plan. One person with 3 to 5 busy computers uses a few thousand requests a day (the limit is 100,000) and about 12,000 database writes (the limit is 100,000).
+Yes. DeviceTally is MIT-licensed, and it runs on Cloudflare's free plan (or your own server). One person with 3 to 5 busy computers uses a few thousand requests a day (the limit is 100,000) and about 12,000 database writes (the limit is 100,000).
 </details>
 
 <details><summary><b>Who can see my data?</b></summary>
@@ -270,6 +270,16 @@ No. Hooks run asynchronously and only append a line to a local file. Uploads hap
 <details><summary><b>Which tools and models are supported?</b></summary>
 
 Claude Code in full detail. Codex, OpenCode and Kimi as token totals per model (via [tokscale](https://github.com/junhoyeo/tokscale)). Agent status: Claude Code (working, needs you, done) and Codex (done).
+</details>
+
+<details><summary><b>Can I run the server without Cloudflare?</b></summary>
+
+Yes. The same server runs with Docker or Node.js, with its data in one SQLite file: a VPS, a home server, Railway, Fly.io, InstaCloud or any Docker host.
+```sh
+git clone https://github.com/bipul0525/devicetally && cd devicetally/worker
+docker compose up -d && docker compose logs   # prints the setup token
+```
+Then in the app: **Sign in as admin** → tick **First time on this server**. Put it behind HTTPS for computers outside your network. Full guide: [docs/self-hosting.md](docs/self-hosting.md).
 </details>
 
 <details><summary><b>Advanced: create the server from the terminal</b></summary>
@@ -299,6 +309,7 @@ devicetally uninstall         remove the hooks (restoring Claude's settings) and
 ```sh
 cd agent && go test ./...              # tracker (Go)
 cd worker && npm ci && npm test        # server (Cloudflare Worker, runs in workerd)
+cd worker && npm run test:node         # the same tests on Node + SQLite (Docker server)
 cd app && npm ci && npm run app        # app (Tauri: Rust + Preact); tests: cargo test in app/src-tauri
 ```
 

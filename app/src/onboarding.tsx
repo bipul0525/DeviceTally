@@ -163,7 +163,7 @@ export function SignIn({ back, done }: { back: () => void; done: () => void }) {
   const go = async (e: Event) => {
     e.preventDefault(); setBusy(true); setErr('')
     try {
-      // A server made with `npm run setup` has no admin yet: create it with the setup token first.
+      // A new server (npm run setup, or Docker/Node) has no admin yet: create it with the setup token first.
       if (first) await invoke('create_admin', { server: f.server, token: f.token, email: f.email, password: f.password, timezone: tz })
       else await invoke('sign_in', { server: f.server, email: f.email, password: f.password })
       done()
@@ -178,8 +178,8 @@ export function SignIn({ back, done }: { back: () => void; done: () => void }) {
         <div class="field"><label for="ss">Server address</label><input id="ss" type="text" required placeholder="https://devicetally.you.workers.dev" value={f.server} onInput={(e) => setF({ ...f, server: e.currentTarget.value })} /></div>
         <div class="field"><label for="se">Email</label><input id="se" type="email" required placeholder="you@example.com" autoComplete="username" value={f.email} onInput={(e) => setF({ ...f, email: e.currentTarget.value })} /></div>
         <div class="field"><label for="sp">Password</label><input id="sp" type="password" required minLength={first ? 10 : 1} autoComplete="current-password" placeholder={first ? 'Choose one, at least 10 characters' : 'Your admin password'} value={f.password} onInput={(e) => setF({ ...f, password: e.currentTarget.value })} /></div>
-        <div class="field"><label for="sf">First time on this server (created with <code>npm run setup</code>)</label><input id="sf" type="checkbox" checked={first} onChange={(e) => setFirst(e.currentTarget.checked)} /></div>
-        {first && <div class="field"><label for="st">Setup token</label><input id="st" type="password" required placeholder="Printed by npm run setup" value={f.token} onInput={(e) => setF({ ...f, token: e.currentTarget.value })} /></div>}
+        <div class="field"><label for="sf">First time on this server (no admin yet)</label><input id="sf" type="checkbox" checked={first} onChange={(e) => setFirst(e.currentTarget.checked)} /></div>
+        {first && <div class="field"><label for="st">Setup token</label><input id="st" type="password" required placeholder="Printed by npm run setup or the server's log" value={f.token} onInput={(e) => setF({ ...f, token: e.currentTarget.value })} /></div>}
       </div>
       <p class="hint">Forgot the address? It's in your Cloudflare account under Workers &amp; Pages → devicetally.</p>
       <div class="actions"><button class="btn primary" disabled={busy}>{busy ? 'Signing in…' : first ? 'Create admin login' : 'Sign in'}</button></div>
