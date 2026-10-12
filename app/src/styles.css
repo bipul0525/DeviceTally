@@ -252,6 +252,8 @@ tr:has(.request) { background: color-mix(in srgb, #ff9f0a 10%, transparent); }
 .details-row td { padding-top: 0; }
 .device-details { display: flex; flex-direction: column; gap: 5px; padding: 0 0 6px 22px; }
 .badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.events summary { cursor: pointer; margin: 0; }
+.events ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; max-height: 180px; overflow-y: auto; }
 .badge { font-size: 11px; padding: 1px 8px; border-radius: 9px; border: 1px solid var(--line); color: var(--muted); }
 .badge.ok { color: #30d158; border-color: color-mix(in srgb, #30d158 40%, transparent); }
 .badge.warn { color: #ff9f0a; border-color: color-mix(in srgb, #ff9f0a 40%, transparent); }

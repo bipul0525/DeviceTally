@@ -37,3 +37,14 @@ func TestConfigDirs(t *testing.T) {
 		t.Fatalf("want only .claude-work, got %v", d)
 	}
 }
+
+func TestEventsKeepTheLast30(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 35; i++ {
+		AddEvent(dir, Event{At: int64(i), Kind: "silent", Text: "x"})
+	}
+	ev := Events(dir)
+	if len(ev) != 30 || ev[0].At != 5 || ev[29].At != 34 {
+		t.Fatalf("%d events, first %d", len(ev), ev[0].At)
+	}
+}

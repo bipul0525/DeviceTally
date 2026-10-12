@@ -184,6 +184,15 @@ function DailyChart({ days, series }: { days: { day: string; tokens: number }[];
 
 type DeviceUsage = { id: string; name: string; os: string | null; chip: number; today: number; week: number; month: number; active_week: number; last_active: number | null; last_prompt: number | null; last_seen: number | null }
 
+/** Online on a weekday afternoon with no usage today, though it normally has plenty: usage may be
+ * happening where DeviceTally can't see it. Only a hint. */
+function quiet(d: DeviceUsage): boolean {
+  const now = new Date()
+  const day = now.getDay()
+  return day > 0 && day < 6 && now.getHours() >= 14 && d.today === 0 && d.month / 30 > 200_000
+    && health(d.last_seen).state !== 'offline' && Date.now() - (d.last_seen ?? 0) < 30 * 60_000
+}
+
 // Admin: every computer side by side, so it's clear which one uses how much. Click to filter.
 function DevicesAtGlance({ selected, select }: { selected: string; select: (id: string) => void }) {
   // One tokens column with a range picker, instead of Today / 7 days / 30 days side by side.
@@ -196,7 +205,11 @@ function DevicesAtGlance({ selected, select }: { selected: string; select: (id: 
     const out: string[] = []
     if (h.hooks === 'missing') out.push(`${d.name}: Claude Code tracking hooks are missing`)
     if (h.paused) out.push(`${d.name}: tracking is paused`)
-    if (h.server_blocked) out.push(`${d.name}: DeviceTally's server is blocked in its hosts file (usage still gets through)`)
+    if (h.server_blocked) out.push(`${d.name}: DeviceTally's server is blocked in its hosts file${h.hosts_changed_at ? ` (edited ${ago(h.hosts_changed_at)})` : ''}; usage still gets through`)
+    else if (h.hosts_lines?.length) out.push(`${d.name}: its hosts file sends DeviceTally's server to another address (${h.hosts_lines.join(' | ')})`)
+    if (h.dns_routed && !h.server_blocked) out.push(`${d.name}: DNS on this computer or its network blocks DeviceTally's server; usage still gets through`)
+    const events = (h.events ?? []).filter((e) => notable(e) && Date.now() - e.at < 7 * 86400_000).length
+    if (events) out.push(`${d.name}: ${events} tracking event${events > 1 ? 's' : ''} in the last 7 days (see Devices)`)
     const removed = (h.removed ?? []).filter((r) => Date.now() - r.at < 7 * 86400_000).length
     if (removed) out.push(`${d.name}: ${removed} Claude Code transcript${removed > 1 ? 's were' : ' was'} deleted before upload`)
     if (!h.locked && h.config_dirs?.length) out.push(`${d.name}: Claude Code has another settings folder that isn't tracked`)
@@ -207,17 +220,24 @@ function DevicesAtGlance({ selected, select }: { selected: string; select: (id: 
     <section class="section"><h2>Devices</h2>
       <Load q={q}>
         {(rows) => (<>
-          {(problems.length > 0 || rows.some((d) => health(d.last_seen ?? d.last_active).state === 'offline')) && (
+          {(problems.length > 0 || rows.some(quiet) || rows.some((d) => health(d.last_seen ?? d.last_active).state === 'offline')) && (
             <div class="notes" role="status">
               {rows.filter((d) => health(d.last_seen ?? d.last_active).state === 'offline').map((d) => {
-                const days = Math.max(1, Math.round((Date.now() - (d.last_seen ?? d.last_active ?? 0)) / 86400000))
+                const h = devs.data?.find((x) => x.id === d.id)?.health
+                const why = h?.server_blocked || h?.hosts_lines?.length ? ' · its hosts file names the DeviceTally server' : h?.hooks === 'missing' ? ' · its tracking hooks were missing' : h?.paused ? ' · tracking was paused' : ''
                 return (
                   <div key={d.id} class="note">
                     <span class="note-ic off" aria-hidden="true" />
-                    <span title="Nothing from its app or tracker. It may be switched off, offline, or DeviceTally was removed from it."><b>{d.name}</b> isn't reporting · last heard from {ago(d.last_seen ?? d.last_active)}</span>
+                    <span title="Nothing from its app or tracker. It may be switched off, offline, or DeviceTally was removed from it."><b>{d.name}</b> isn't reporting · last heard from {ago(d.last_seen ?? d.last_active)}{why}</span>
                   </div>
                 )
               })}
+              {rows.filter(quiet).map((d) => (
+                <div key={'q' + d.id} class="note">
+                  <span class="note-ic warn" aria-hidden="true" />
+                  <span title="Online, but no usage reached DeviceTally today. Claude Code may be running from a folder, user account or virtual machine DeviceTally doesn't see, or the transcripts were removed."><b>{d.name}</b> · online but no usage today (usually about {fmt(d.month / 30)} a day)</span>
+                </div>
+              ))}
               {problems.map((p) => (
                 <div key={p} class="note">
                   <span class="note-ic warn" aria-hidden="true" />
@@ -421,7 +441,11 @@ function SessionDetail({ id, admin, back, project, devices }: { id: string; admi
 // ---------- Devices (admin) ----------
 type Device = { id: string; name: string; os: string | null; arch: string | null; agent_version: string | null; last_seen: number | null; revoked_at: number | null; disconnect_requested_at?: number | null
   health?: DeviceHealth | null; health_at?: number | null; disk_full_in_days?: number | null }
-type DeviceHealth = { hooks?: 'locked' | 'user' | 'missing'; locked?: boolean; paused?: boolean; removed?: { path: string; at: number }[]; config_dirs?: string[]; disk_free?: number; disk_total?: number; app?: string; agent?: string; update_error?: string; app_at?: number; tracker_at?: number; app_running?: boolean; server_blocked?: boolean }
+type DeviceHealth = { hooks?: 'locked' | 'user' | 'missing'; locked?: boolean; paused?: boolean; removed?: { path: string; at: number }[]; config_dirs?: string[]; disk_free?: number; disk_total?: number; app?: string; agent?: string; update_error?: string; app_at?: number; tracker_at?: number; app_running?: boolean; server_blocked?: boolean
+  hosts_lines?: string[]; hosts_changed_at?: number; dns_routed?: boolean; proxy?: string; events?: DeviceEvent[] }
+type DeviceEvent = { at: number; kind: string; text: string }
+/** Events worth the admin's attention (a lost internet connection isn't). */
+const notable = (e: DeviceEvent) => !e.text.includes('no internet connection')
 
 /** Under each computer in Devices: tracking health, disk, and the projects it's meant for. */
 function DeviceDetails({ d, settings, saved }: { d: Device; settings: SettingRow[]; saved: () => void }) {
@@ -449,7 +473,11 @@ function DeviceDetails({ d, settings, saved }: { d: Device; settings: SettingRow
     badges.push(h.locked ? ['ok', '🔒 Locked', 'Tracking is in Claude Code\'s system-wide settings'] : ['', 'Not locked', 'Settings → Lock this computer, on that computer'])
     if (h.hooks === 'missing') badges.push(['bad', 'Tracking hooks missing', 'Claude Code isn\'t reporting to DeviceTally on this computer'])
     if (h.paused) badges.push(['warn', 'Tracking paused', 'Someone ran "devicetally pause"'])
-    if (h.server_blocked) badges.push(['bad', 'DeviceTally blocked in the hosts file', 'Someone added a line to this computer\'s hosts file (/etc/hosts) that sends the DeviceTally server\'s address nowhere. Usage still gets through, because DeviceTally routes around it. To remove it, delete the line with the server\'s address from /etc/hosts on that computer (needs its admin password).'])
+    const lines = h.hosts_lines?.length ? `\n\nLines:\n${h.hosts_lines.join('\n')}${h.hosts_changed_at ? `\n\nHosts file last changed ${new Date(h.hosts_changed_at).toLocaleString()}` : ''}` : ''
+    if (h.server_blocked) badges.push(['bad', 'DeviceTally blocked in the hosts file', 'Someone added a line to this computer\'s hosts file (/etc/hosts) that sends the DeviceTally server\'s address nowhere. Usage still gets through, because DeviceTally routes around it. To remove it, delete the line with the server\'s address from /etc/hosts on that computer (needs its admin password).' + lines])
+    else if (h.hosts_lines?.length) badges.push(['bad', 'Server redirected in the hosts file', 'This computer\'s hosts file sends the DeviceTally server\'s name to another address. DeviceTally tries the real address when that one fails.' + lines])
+    if (h.dns_routed && !h.server_blocked) badges.push(['bad', 'DNS blocks DeviceTally', 'This computer\'s DNS (or a blocker such as NextDNS, AdGuard or Pi-hole, or the network\'s) gives the server a wrong address or none. Usage still gets through: DeviceTally asks 1.1.1.1 for the real address and checks the server\'s certificate.'])
+    if (h.proxy) badges.push(['', 'Uses a proxy', h.proxy])
     if (recentRemoved.length) badges.push(['bad', `${recentRemoved.length} transcript${recentRemoved.length > 1 ? 's' : ''} deleted`, recentRemoved.map((r) => r.path).join('\n')])
     if (h.config_dirs?.length) badges.push([h.locked ? '' : 'warn', `Other Claude settings folder${h.config_dirs.length > 1 ? 's' : ''}${h.locked ? ' (covered by the lock)' : ''}`, h.config_dirs.join('\n')])
   } else badges.push(['', 'No health report yet', 'Reports come from DeviceTally 0.10 or newer on that computer'])
@@ -457,6 +485,12 @@ function DeviceDetails({ d, settings, saved }: { d: Device; settings: SettingRow
   return (
     <div class="device-details">
       <div class="badges">{badges.map(([k, t, title]) => <span key={t} class={`badge ${k}`} title={title}>{t}</span>)}</div>
+      {!!h?.events?.length && (
+        <details class="events">
+          <summary class="hint">Events ({h.events.length}) · last {ago(h.events[h.events.length - 1].at)}</summary>
+          <ul>{[...h.events].reverse().map((e) => <li key={e.at + e.kind}><span class="muted">{new Date(e.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span> <span class={notable(e) ? '' : 'muted'}>{e.text}</span></li>)}</ul>
+        </details>
+      )}
       <div class="hint" style={{ margin: 0 }}>
         {h?.disk_total ? <>Disk {gbText(h.disk_free ?? 0)} free of {gbText(h.disk_total)}{d.disk_full_in_days != null && <b class={d.disk_full_in_days < 30 ? 'warn' : ''}> · full in about {d.disk_full_in_days < 14 ? `${d.disk_full_in_days} days` : `${Math.round(d.disk_full_in_days / 7)} weeks`}</b>}</> : null}
         {d.health_at ? <> · reported {ago(d.health_at)}</> : null}

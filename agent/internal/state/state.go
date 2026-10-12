@@ -63,6 +63,11 @@ type State struct {
 	ToolsScheduled bool            `json:"tools_scheduled,omitempty"`
 	ToolsError     string          `json:"tools_error,omitempty"`
 	LastError      string          `json:"last_error,omitempty"`
+	// When uploads started failing (ms, 0 = working) and why, for the "couldn't reach" event.
+	FailingSince int64  `json:"failing_since,omitempty"`
+	FailReason   string `json:"fail_reason,omitempty"`
+	// Hosts-file lines naming the server at the last check, to notice them being added or removed.
+	HostsLines []string `json:"hosts_lines,omitempty"`
 	// Last modified time (ms) of each known transcript, to tell a deleted transcript from old cleanup.
 	Seen map[string]int64 `json:"seen,omitempty"`
 }

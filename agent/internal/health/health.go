@@ -101,3 +101,35 @@ func Read(dir string) Health {
 	}
 	return h
 }
+
+// Event is something the admin should know about, with when it happened: the computer couldn't
+// reach the server (and why), the hosts file changed, hooks or the background job were removed.
+type Event struct {
+	At   int64  `json:"at"` // ms
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
+func eventsPath(dir string) string { return filepath.Join(dir, "events.json") }
+
+// Events loads the saved events, oldest first.
+func Events(dir string) []Event {
+	var out []Event
+	if b, err := os.ReadFile(eventsPath(dir)); err == nil {
+		json.Unmarshal(b, &out)
+	}
+	return out
+}
+
+// AddEvent saves e, keeping the last 30 events.
+func AddEvent(dir string, e Event) {
+	all := append(Events(dir), e)
+	if len(all) > 30 {
+		all = all[len(all)-30:]
+	}
+	b, _ := json.Marshal(all)
+	tmp := eventsPath(dir) + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		os.Rename(tmp, eventsPath(dir))
+	}
+}

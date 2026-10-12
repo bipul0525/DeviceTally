@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,7 +179,11 @@ func syncCmd() error {
 				if locked {
 					hooks.Uninstall(filepath.Join(d, "settings.json"))
 				} else {
-					hooks.Install(filepath.Join(d, "settings.json"), exe)
+					p := filepath.Join(d, "settings.json")
+					had := !fileExists(p) || hooks.UserHasOurs(p)
+					if _, err := hooks.Install(p, exe); err == nil && !had {
+						health.AddEvent(state.Dir(), health.Event{At: time.Now().UnixMilli(), Kind: "hooks", Text: "Claude Code tracking hooks were removed from " + p + "; DeviceTally put them back"})
+					}
 				}
 			}
 			hooks.InstallCodex(codexConfig(), exe)
@@ -209,6 +214,8 @@ func syncCmd() error {
 			scheduleTools(st, true)
 		}
 		st.LastSync = time.Now()
+		noteOutage(st, err)
+		noteHosts(st)
 		writeHealth(st, locked)
 		if err == nil {
 			reportHealth(c, st)
@@ -265,7 +272,67 @@ func reportHealth(c *syncer.Client, st *state.State) {
 	r["app_running"] = appRunning()
 	// Someone pointed the server's name at nowhere in the hosts file (uploads route around it).
 	r["server_blocked"] = netx.Blocked(netx.HostOf(st.Server))
+	lines, changed := netx.HostsLines(netx.HostOf(st.Server))
+	r["hosts_lines"] = lines
+	if len(lines) > 0 {
+		r["hosts_changed_at"] = changed
+	}
+	// This computer's lookup was blocked some other way (DNS, a redirect) and uploads used 1.1.1.1.
+	r["dns_routed"] = netx.Routed()
+	r["proxy"] = proxyInUse()
+	// The last 15: the server keeps at most 16 KB of health per computer.
+	ev := health.Events(state.Dir())
+	if len(ev) > 15 {
+		ev = ev[len(ev)-15:]
+	}
+	r["events"] = ev
 	c.Health(r)
+}
+
+// proxyInUse is the HTTPS proxy set for the tracker, without any password in it ("" if none).
+func proxyInUse() string {
+	for _, k := range []string{"HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"} {
+		if v := os.Getenv(k); v != "" {
+			if u, err := url.Parse(v); err == nil && u.User != nil {
+				u.User = nil
+				return u.String()
+			}
+			return v
+		}
+	}
+	return ""
+}
+
+// noteOutage remembers when uploads started failing and why. When they work again, an outage of
+// over 15 minutes is saved as an event, so the admin sees why the computer went silent.
+func noteOutage(st *state.State, err error) {
+	now := time.Now().UnixMilli()
+	if err != nil {
+		if st.FailingSince == 0 {
+			st.FailingSince = now
+		}
+		st.FailReason = netx.Reason(err)
+		return
+	}
+	if st.FailingSince != 0 && now-st.FailingSince > 15*60_000 {
+		d := time.Duration(now-st.FailingSince) * time.Millisecond
+		health.AddEvent(state.Dir(), health.Event{At: st.FailingSince, Kind: "silent", Text: fmt.Sprintf("Couldn't reach the server for %s: %s", d.Round(time.Minute), st.FailReason)})
+	}
+	st.FailingSince, st.FailReason = 0, ""
+}
+
+// noteHosts saves an event when hosts-file lines naming the server appear, change or go away.
+func noteHosts(st *state.State) {
+	lines, changed := netx.HostsLines(netx.HostOf(st.Server))
+	if strings.Join(lines, "\n") == strings.Join(st.HostsLines, "\n") {
+		return
+	}
+	text := "Hosts file lines for the DeviceTally server were removed"
+	if len(lines) > 0 {
+		text = "Hosts file (" + netx.HostsPath + ") edited to send the DeviceTally server elsewhere: " + strings.Join(lines, " | ")
+	}
+	health.AddEvent(state.Dir(), health.Event{At: changed, Kind: "hosts", Text: text})
+	st.HostsLines = lines
 }
 
 // appRunning reports whether the DeviceTally app is running on this computer.
@@ -289,6 +356,9 @@ func scheduleTools(st *state.State, want bool) {
 	}
 	var err error
 	if want {
+		if st.ToolsScheduled {
+			health.AddEvent(state.Dir(), health.Event{At: time.Now().UnixMilli(), Kind: "schedule", Text: "The 5-minute background check-in was removed; DeviceTally put it back"})
+		}
 		err = schedule.Install(installedPath())
 	} else {
 		err = schedule.Remove()
@@ -569,6 +639,9 @@ func status() error {
 	fmt.Printf("Hooks:      %s\n", map[string]string{"locked": "in Claude Code's system-wide settings (locked)", "user": "installed", "missing": "MISSING: Claude Code isn't reporting to DeviceTally", "": "unknown"}[h.Hooks])
 	fmt.Printf("Check-in:   %s\n", map[bool]string{true: "every 5 minutes (background job installed)", false: "background job NOT installed: only when Claude Code runs"}[schedule.Installed()])
 	fmt.Printf("App:        %s\n", map[bool]string{true: "running", false: "not running"}[appRunning()])
+	if st.FailingSince != 0 {
+		fmt.Printf("Not reaching the server since %s: %s\n", time.UnixMilli(st.FailingSince).Format("Jan 2 15:04"), st.FailReason)
+	}
 	if netx.Blocked(netx.HostOf(st.Server)) {
 		fmt.Printf("Blocked:    the hosts file (%s) sends %s nowhere; DeviceTally routes around it, but remove that line\n", netx.HostsPath, netx.HostOf(st.Server))
 	}
@@ -587,6 +660,13 @@ func setPaused(p bool) error {
 	st, err := state.Load()
 	if err != nil {
 		return err
+	}
+	if st.Paused != p {
+		text := "Tracking resumed"
+		if p {
+			text = "Tracking paused (devicetally pause)"
+		}
+		health.AddEvent(state.Dir(), health.Event{At: time.Now().UnixMilli(), Kind: "paused", Text: text})
 	}
 	st.Paused = p
 	if err := st.Save(); err != nil {

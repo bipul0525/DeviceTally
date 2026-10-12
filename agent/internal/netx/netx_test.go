@@ -2,9 +2,11 @@ package netx
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,5 +55,39 @@ func TestReachesServerDespiteHostsBlock(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 200 {
 		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestHostsLinesShowBlocksAndRedirects(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "hosts")
+	os.WriteFile(p, []byte("127.0.0.1 localhost\n0.0.0.0   devicetally.example.workers.dev\n::  devicetally.example.workers.dev # blocked\n"), 0o600)
+	HostsPath = p
+	lines, mod := HostsLines("devicetally.example.workers.dev")
+	if len(lines) != 2 || lines[0] != "0.0.0.0 devicetally.example.workers.dev" || lines[1] != ":: devicetally.example.workers.dev" || mod == 0 {
+		t.Fatalf("lines %q, changed %d", lines, mod)
+	}
+	os.WriteFile(p, []byte("10.0.0.9 devicetally.example.workers.dev\n"), 0o600)
+	if lines, _ := HostsLines("devicetally.example.workers.dev"); len(lines) != 1 || Blocked("devicetally.example.workers.dev") {
+		t.Fatalf("a redirect is listed but isn't a block: %q", lines)
+	}
+}
+
+func TestReasonsInPlainWords(t *testing.T) {
+	Online = func() bool { return true }
+	cases := map[string]string{
+		"dial tcp 0.0.0.0:443: connect: connection refused":       "refused on this computer",
+		"dial tcp: lookup x: no such host":                        "1.1.1.1 blocked",
+		"Post \"https://x\": context deadline exceeded":           "firewall",
+		"proxyconnect tcp: dial tcp 127.0.0.1:9: connect refused": "proxy",
+		"POST /api/v1/sync: 503 {\"error\":\"db_limit\"}":         "database limit",
+	}
+	for msg, want := range cases {
+		if got := Reason(errors.New(msg)); !strings.Contains(got, want) {
+			t.Errorf("%s: %q", msg, got)
+		}
+	}
+	Online = func() bool { return false }
+	if got := Reason(errors.New("dial tcp: connect: connection refused")); got != "no internet connection" {
+		t.Errorf("offline: %q", got)
 	}
 }

@@ -62,6 +62,8 @@ struct AppState {
     seen_sessions: Mutex<Option<activity::Seen>>,
     // Disk alert level already announced (0, 80 or 90), so each is announced once.
     disk_alerted: Mutex<u8>,
+    /// Admin: device problems already notified (None until the first check, which only notes them).
+    device_alerted: Mutex<Option<std::collections::HashSet<String>>>,
     // While an agent is working the menu bar redraws 4 times a second (the ring turns); system
     // counters are still read at most every 2 s.
     animating: std::sync::atomic::AtomicBool,
@@ -278,6 +280,58 @@ fn disk_check(app: &AppHandle) {
         notify_user(app, &format!("Disk {level}% full"), &format!("{} free. Open DeviceTally → Storage to see what's using space.", stats::bytes(s.disk_free)), cfg.sound(true));
     }
     *done = level;
+}
+
+/// Admin: a notification when a computer shows a new sign of tracking being blocked or removed.
+async fn device_check(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let server = state.config.lock().unwrap().server.clone();
+    let Some(token) = (!server.is_empty()).then(|| state.token(&server)).flatten() else { return };
+    let Ok(res) = state.http.get(format!("{server}/api/devices")).header("cookie", format!("dt_session={token}")).send().await else { return };
+    let Ok(devices) = res.json::<Value>().await else { return };
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+    let found = device_alerts(&devices, now);
+    let new: Vec<_> = {
+        let mut seen = state.device_alerted.lock().unwrap();
+        let new = match seen.as_ref() {
+            Some(s) => found.iter().filter(|(k, ..)| !s.contains(k)).cloned().collect(),
+            None => vec![], // problems already there at start are shown in the window, not notified
+        };
+        *seen = Some(found.iter().map(|(k, ..)| k.clone()).collect());
+        new
+    };
+    let sound = state.config.lock().unwrap().menubar.alerts.sound(true).map(String::from);
+    for (_, title, body) in new.into_iter().take(3) {
+        notify_user(app, &title, &body, sound.as_deref());
+    }
+}
+
+/// (key, title, body) for each tracking problem in the admin's device list: blocks, missing hooks,
+/// pause, and events from the last day (a lost internet connection isn't one).
+fn device_alerts(devices: &Value, now: i64) -> Vec<(String, String, String)> {
+    let mut out = vec![];
+    for d in devices.as_array().into_iter().flatten().filter(|d| d["revoked_at"].is_null()) {
+        let (id, name, h) = (d["id"].as_str().unwrap_or(""), d["name"].as_str().unwrap_or("A computer"), &d["health"]);
+        let mut add = |key: String, body: &str| out.push((format!("{id}:{key}"), name.to_string(), body.to_string()));
+        if h["server_blocked"].as_bool() == Some(true) {
+            add("blocked".into(), "DeviceTally's server is blocked in its hosts file (usage still gets through).");
+        } else if h["dns_routed"].as_bool() == Some(true) {
+            add("dns".into(), "DNS on this computer blocks DeviceTally's server (usage still gets through).");
+        }
+        if h["hooks"].as_str() == Some("missing") {
+            add("hooks".into(), "Claude Code tracking hooks are missing.");
+        }
+        if h["paused"].as_bool() == Some(true) {
+            add("paused".into(), "Tracking is paused.");
+        }
+        for e in h["events"].as_array().into_iter().flatten() {
+            let (at, text) = (e["at"].as_i64().unwrap_or(0), e["text"].as_str().unwrap_or(""));
+            if now - at < 86_400_000 && !text.contains("no internet connection") {
+                add(format!("ev:{at}:{}", e["kind"].as_str().unwrap_or("")), text);
+            }
+        }
+    }
+    out
 }
 
 /// Storage on this computer (read-only), for the Storage tab.
@@ -2050,6 +2104,7 @@ pub fn run() {
                 activity_seen: Mutex::new(now_ms()),
                 seen_sessions: Mutex::new(None),
                 disk_alerted: Mutex::new(0),
+                device_alerted: Mutex::new(None),
                 animating: std::sync::atomic::AtomicBool::new(false),
                 card_id: std::sync::atomic::AtomicI64::new(0),
                 last_sample: Mutex::new(None),
@@ -2165,6 +2220,7 @@ pub fn run() {
                     refresh_tray(&handle).await;
                     heartbeat(&handle).await;
                     disk_check(&handle);
+                    device_check(&handle).await;
                     tokio::time::sleep(Duration::from_secs(300)).await;
                 }
             });
@@ -2197,6 +2253,22 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn device_alerts_cover_blocks_and_recent_events() {
+        use super::device_alerts;
+        let now = 100_000_000;
+        let devices = serde_json::json!([
+            { "id": "a", "name": "Dibbya", "revoked_at": null, "health": { "server_blocked": true, "hooks": "user", "events": [
+                { "at": now - 1000, "kind": "hosts", "text": "Hosts file edited" },
+                { "at": now - 2000, "kind": "silent", "text": "Couldn't reach the server for 1h: no internet connection" },
+                { "at": now - 90_000_000, "kind": "hooks", "text": "old" } ] } },
+            { "id": "b", "name": "Old", "revoked_at": 5, "health": { "server_blocked": true } },
+            { "id": "c", "name": "Riya", "revoked_at": null, "health": null }
+        ]);
+        let keys: Vec<String> = device_alerts(&devices, now).into_iter().map(|(k, ..)| k).collect();
+        assert_eq!(keys, vec!["a:blocked".to_string(), format!("a:ev:{}:hosts", now - 1000)]);
+    }
 
     #[test]
     fn update_policy_device_beats_global() {
