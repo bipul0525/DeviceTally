@@ -1216,7 +1216,7 @@ function Preview({ cfg }: { cfg: MenuBarCfg }) {
     }, () => {}).finally(() => { busy.current = false; if (want.current !== asked) pump() })
   }
   useEffect(() => { want.current = cfg; pump() }, [cfg])
-  useEffect(() => { alive.current = true; const t = setInterval(pump, 2000); return () => { alive.current = false; clearInterval(t) } }, [])
+  useEffect(() => { alive.current = true; const t = setInterval(() => document.visibilityState === 'visible' && pump(), 2000); return () => { alive.current = false; clearInterval(t) } }, [])
   if (!img) return <div class="mb-preview"><div class="mb-bar light" /><div class="mb-bar dark" /></div>
   if ('text' in img) return <p class="hint">{cfg.items.length ? img.text : 'Nothing is shown: only the DeviceTally icon appears. Turn on an item on the left.'}</p>
   const size = { width: `${img.w / 2}px`, height: `${img.h / 2}px` }
@@ -1256,7 +1256,7 @@ function BarPreview({ cfg, sel, select }: { cfg: MenuBarCfg; sel: string; select
       .finally(() => { busy.current = false; if (want.current !== asked) pump() })
   }
   useEffect(() => { want.current = cfg; pump() }, [cfg])
-  useEffect(() => { alive.current = true; const t = setInterval(pump, 2000); return () => { alive.current = false; clearInterval(t) } }, [])
+  useEffect(() => { alive.current = true; const t = setInterval(() => document.visibilityState === 'visible' && pump(), 2000); return () => { alive.current = false; clearInterval(t) } }, [])
   const total = (imgs ?? []).reduce((a, x) => a + x.w / 2, 0)
   return (
     <div class="bar-preview">

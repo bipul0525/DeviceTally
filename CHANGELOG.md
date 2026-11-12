@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1
+
+- **Fixed: Agent status stuck on "working" after you stop Claude Code.** Stopping a turn (Esc, the stop button, or declining a permission in the VS Code extension) runs no hook, so the ring kept turning for up to 3 hours. DeviceTally now sees the stop in the session's transcript, and closing a session mid-task clears it too.
+- **Fixed: "needs you" in the VS Code extension.** Permission prompts there now show the red **!** (and the notification), and it goes back to working once you answer, in the terminal too. Claude Code's idle reminders no longer count as a question.
+- **Uses much less battery:** the working ring draws about 4 frames a second instead of 12, and on battery power it moves only every 2 seconds. The connection check to 1.1.1.1 runs only while the Network panel is open (it ran every 2 seconds all day with a Network item in the menu bar, keeping Wi-Fi awake). CPU temperature is read every 15 seconds. Hidden settings windows stop refreshing their preview.
+
 ## 1.7.0
 
 - **Run the server without Cloudflare:** the same server runs with Docker or Node.js, with its data in one SQLite file (a VPS, a home server, Railway, Fly.io, InstaCloud). `docker compose up -d` in `worker/`; guide in [docs/self-hosting.md](docs/self-hosting.md). On such a server the app shows how to update or remove it instead of the Cloudflare buttons.

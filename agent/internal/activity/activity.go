@@ -13,12 +13,14 @@ import (
 
 // Hook is the part of a Claude Code hook's input used here.
 type Hook struct {
-	Event     string `json:"hook_event_name"`
-	SessionID string `json:"session_id"`
-	Cwd       string `json:"cwd"`
-	Message   string `json:"message"`
-	Prompt    string `json:"prompt"`
-	Tool      string `json:"-"` // "" = Claude Code
+	Event      string `json:"hook_event_name"`
+	SessionID  string `json:"session_id"`
+	Cwd        string `json:"cwd"`
+	Message    string `json:"message"`
+	Kind       string `json:"notification_type"` // Notification: permission_prompt, idle_prompt, … ("" before Claude Code 2.1)
+	Prompt     string `json:"prompt"`
+	Transcript string `json:"transcript_path"`
+	Tool       string `json:"-"` // "" = Claude Code
 }
 
 // Status is one session's file: <dir>/<session>.json.
@@ -29,6 +31,9 @@ type Status struct {
 	Tool    string `json:"tool,omitempty"`    // "" = Claude Code, "codex"
 	Started int64  `json:"started,omitempty"` // ms, when the current task began (the prompt)
 	Prompt  string `json:"prompt,omitempty"`  // the start of that prompt, for the "finished" notification (stays on this computer)
+	// The session's transcript: the app reads its end to notice a stopped turn (no hook runs for
+	// that) and an answered permission prompt.
+	Transcript string `json:"transcript,omitempty"`
 }
 
 var safeID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
@@ -54,12 +59,25 @@ func Record(dir string, h Hook, now int64) {
 		next.Prompt = short(h.Prompt)
 	case "Stop":
 		next.State = "done"
+	case "PermissionRequest":
+		// Runs for every permission prompt, also in the VS Code extension (which sends no Notification).
+		next.State = "waiting"
 	case "Notification":
-		// After a finished task Claude Code reminds you it is waiting; that isn't a new question.
+		if h.Kind != "" && h.Kind != "permission_prompt" && h.Kind != "elicitation_dialog" {
+			return // idle reminders, sign-in notices: not a question for you
+		}
+		// Older Claude Code (no notification_type): after a finished task it reminds you it is waiting.
 		if prev.State == "done" && strings.Contains(strings.ToLower(h.Message), "waiting for your input") {
 			return
 		}
 		next.State = "waiting"
+	case "SessionEnd":
+		// Closed (tab, window, /clear, exit) in the middle of a task: nothing is working any more.
+		// A finished task stays, so its ✓ still shows until seen.
+		if prev.State != "done" {
+			os.Remove(path)
+		}
+		return
 	default:
 		return
 	}
@@ -67,6 +85,9 @@ func Record(dir string, h Hook, now int64) {
 	next.Tool = h.Tool
 	if h.Cwd != "" {
 		next.Project = filepath.Base(h.Cwd)
+	}
+	if h.Transcript != "" {
+		next.Transcript = h.Transcript
 	}
 	b, _ := json.Marshal(next)
 	os.MkdirAll(dir, 0o700)

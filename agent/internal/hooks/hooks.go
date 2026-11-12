@@ -11,8 +11,10 @@ import (
 	"time"
 )
 
-// Notification tells the app when Claude Code is waiting for you (menu-bar status dot).
-var Events = []string{"SessionStart", "UserPromptSubmit", "Stop", "Notification"}
+// Notification and PermissionRequest tell the app when Claude Code is waiting for you (menu-bar
+// status dot; the VS Code extension sends only PermissionRequest); SessionEnd clears a session
+// closed mid-task.
+var Events = []string{"SessionStart", "UserPromptSubmit", "Stop", "Notification", "PermissionRequest", "SessionEnd"}
 
 const marker = "devicetally"
 

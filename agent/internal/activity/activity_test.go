@@ -59,3 +59,33 @@ func TestKeepsThePromptStartForTheFinishedNotification(t *testing.T) {
 		t.Fatalf("long prompt cut to 80 characters, got %d", len(p))
 	}
 }
+
+// The VS Code extension sends PermissionRequest (no Notification) for a permission prompt; newer
+// Claude Code labels its notifications; closing a session mid-task leaves nothing "working".
+func TestPermissionPromptsAndClosedSessions(t *testing.T) {
+	dir := t.TempDir()
+	Record(dir, Hook{Event: "UserPromptSubmit", SessionID: "v", Transcript: "/c/projects/p/v.jsonl"}, 1000)
+	Record(dir, Hook{Event: "PermissionRequest", SessionID: "v"}, 2000)
+	if s := read(t, dir, "v"); s.State != "waiting" || s.Transcript != "/c/projects/p/v.jsonl" {
+		t.Fatalf("permission request → waiting (transcript kept), got %+v", s)
+	}
+	Record(dir, Hook{Event: "UserPromptSubmit", SessionID: "v"}, 3000)
+	Record(dir, Hook{Event: "Notification", SessionID: "v", Kind: "idle_prompt", Message: "Claude needs your attention"}, 4000)
+	if s := read(t, dir, "v"); s.State != "working" {
+		t.Fatalf("an idle reminder isn't a question, got %+v", s)
+	}
+	Record(dir, Hook{Event: "Notification", SessionID: "v", Kind: "permission_prompt", Message: "Claude needs your permission"}, 5000)
+	if s := read(t, dir, "v"); s.State != "waiting" {
+		t.Fatalf("permission_prompt → waiting, got %+v", s)
+	}
+	Record(dir, Hook{Event: "SessionEnd", SessionID: "v"}, 6000)
+	if _, err := os.Stat(filepath.Join(dir, "v.json")); !os.IsNotExist(err) {
+		t.Fatal("a session closed mid-task is removed")
+	}
+	Record(dir, Hook{Event: "UserPromptSubmit", SessionID: "d"}, 1000)
+	Record(dir, Hook{Event: "Stop", SessionID: "d"}, 2000)
+	Record(dir, Hook{Event: "SessionEnd", SessionID: "d"}, 3000)
+	if s := read(t, dir, "d"); s.State != "done" || s.Since != 2000 {
+		t.Fatalf("a finished session keeps its ✓ after closing, got %+v", s)
+	}
+}

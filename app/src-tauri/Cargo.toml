@@ -1,6 +1,6 @@
 [package]
 name = "devicetally-app"
-version = "1.7.0"
+version = "1.7.1"
 description = "DeviceTally: AI coding tool usage in your menu bar"
 edition = "2021"
 license = "MIT"

@@ -18,6 +18,8 @@ pub struct Session {
     pub id: String, // the file name: one per session
     #[serde(default)]
     pub prompt: String, // the start of the prompt being worked on
+    #[serde(default)]
+    pub transcript: String, // the session's transcript ("" = unknown, e.g. Codex)
 }
 
 impl Session {
@@ -106,9 +108,49 @@ pub fn read(dir: &Path) -> Vec<Session> {
         .filter_map(|e| {
             let mut s: Session = serde_json::from_slice(&std::fs::read(e.path()).ok()?).ok()?;
             s.id = e.path().file_stem()?.to_string_lossy().into_owned();
-            Some(s)
+            settle(s)
         })
         .collect()
+}
+
+/// Claude Code runs no hook when a turn is stopped (Esc, the stop button, declining a permission in
+/// the VS Code extension) or when a permission prompt is answered. The transcript tells: a stopped
+/// turn is left out (else it showed "working" for hours, the ring turning all along), and a prompt
+/// answered is working again. Read only once the transcript changed after the last hook.
+fn settle(mut s: Session) -> Option<Session> {
+    if s.transcript.is_empty() || !(s.state == "working" || s.state == "waiting") {
+        return Some(s);
+    }
+    let Ok(meta) = std::fs::metadata(&s.transcript) else { return Some(s) };
+    let modified = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as i64);
+    if modified <= s.since + 1000 {
+        return Some(s);
+    }
+    if stopped(Path::new(&s.transcript), meta.len()) {
+        return None;
+    }
+    if s.state == "waiting" {
+        s.state = "working".into();
+    }
+    Some(s)
+}
+
+/// Whether the transcript's last message is Claude Code's "[Request interrupted by user…]".
+/// Bookkeeping lines (last-prompt, cost-state) written after it are skipped.
+fn stopped(path: &Path, len: u64) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    const TAIL: u64 = 64 * 1024;
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
+    let mut buf = vec![];
+    if f.seek(SeekFrom::Start(len.saturating_sub(TAIL))).is_err() || f.take(TAIL).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&buf)
+        .lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| matches!(v["type"].as_str(), Some("user" | "assistant")))
+        .is_some_and(|v| v["type"] == "user" && v["message"]["content"].to_string().contains("[Request interrupted by user"))
 }
 
 /// The menu-bar Agent status: the most urgent state and how many sessions are in it.
@@ -144,7 +186,7 @@ mod tests {
     use super::*;
 
     fn s(state: &str, since: i64) -> Session {
-        Session { state: state.into(), since, project: "p".into(), tool: String::new(), started: 0, id: "s".into(), prompt: String::new() }
+        Session { state: state.into(), since, project: "p".into(), tool: String::new(), started: 0, id: "s".into(), prompt: String::new(), transcript: String::new() }
     }
 
     #[test]
@@ -161,7 +203,7 @@ mod tests {
     #[test]
     fn alerts_once_per_change_and_skip_quick_tasks() {
         let now = 100_000_000;
-        let sess = |id: &str, state: &str, started: i64| Session { state: state.into(), since: now, project: "devicetally".into(), tool: String::new(), started, id: id.into(), prompt: String::new() };
+        let sess = |id: &str, state: &str, started: i64| Session { state: state.into(), since: now, project: "devicetally".into(), tool: String::new(), started, id: id.into(), prompt: String::new(), transcript: String::new() };
         let mut seen = Seen::new();
         let mut log = vec![];
         // Starting the app: old states are recorded, not announced.
@@ -188,7 +230,35 @@ mod tests {
         std::fs::write(dir.join("a.json"), r#"{"state":"done","since":5,"project":"devicetally"}"#).unwrap();
         std::fs::write(dir.join("b.json.tmp"), "partial").unwrap();
         std::fs::write(dir.join("c.json"), "not json").unwrap();
-        assert_eq!(read(&dir), vec![Session { state: "done".into(), since: 5, project: "devicetally".into(), tool: String::new(), started: 0, id: "a".into(), prompt: String::new() }]);
+        assert_eq!(read(&dir), vec![Session { state: "done".into(), since: 5, project: "devicetally".into(), tool: String::new(), started: 0, id: "a".into(), prompt: String::new(), transcript: String::new() }]);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_stopped_turn_isnt_working_and_an_answered_prompt_is() {
+        let dir = std::env::temp_dir().join(format!("dt-settle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stopped = dir.join("stopped.jsonl");
+        std::fs::copy(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/transcripts/interrupted.jsonl"), &stopped).unwrap();
+        let answered = dir.join("answered.jsonl");
+        std::fs::write(&answered, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}}\n").unwrap();
+        let at = |state: &str, t: &Path, since: i64| Session { transcript: t.to_string_lossy().into(), ..s(state, since) };
+        // Stopped in the VS Code extension (no Stop hook): left out, working or waiting.
+        assert_eq!(settle(at("working", &stopped, 0)), None);
+        assert_eq!(settle(at("waiting", &stopped, 0)), None);
+        // The transcript moved on after the permission prompt: answered, working again.
+        assert_eq!(settle(at("waiting", &answered, 0)).unwrap().state, "working");
+        // Not written since the last hook (a long tool call): unchanged, nothing read.
+        let later = now_ms() + 60_000;
+        assert_eq!(settle(at("working", &stopped, later)).unwrap().state, "working");
+        assert_eq!(settle(at("waiting", &answered, later)).unwrap().state, "waiting");
+        // Done sessions and ones without a transcript are left as they are.
+        assert_eq!(settle(at("done", &stopped, 0)).unwrap().state, "done");
+        assert_eq!(settle(s("working", 0)).unwrap().state, "working");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn now_ms() -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
     }
 }

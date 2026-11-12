@@ -64,9 +64,13 @@ struct AppState {
     disk_alerted: Mutex<u8>,
     /// Admin: device problems already notified (None until the first check, which only notes them).
     device_alerted: Mutex<Option<std::collections::HashSet<String>>>,
-    // While an agent is working the menu bar redraws 4 times a second (the ring turns); system
-    // counters are still read at most every 2 s.
+    // While an agent is working on mains power the ring turns (FRAME_MS); system counters are
+    // still read at most every 2 s.
     animating: std::sync::atomic::AtomicBool,
+    // Agent status from the last full redraw: the ring's frames in between reuse it.
+    agent_now: Mutex<(menubar::Agent, u8)>,
+    // CPU temperature and when it was read: reading every sensor costs, and it changes slowly.
+    temp: Mutex<Option<(std::time::Instant, Option<f32>)>>,
     card_id: std::sync::atomic::AtomicI64,
     last_sample: Mutex<Option<std::time::Instant>>,
     // Separate menu-bar items (one per module, macOS): which exist, in order, and their last images.
@@ -755,8 +759,7 @@ fn draw_menubar(app: &AppHandle) {
     let needs_stats = cfg.items.iter().any(|i| matches!(i.as_str(), "net" | "cpu" | "temp" | "mem" | "disk" | "battery"));
     let sessions = activity::read(&agent_dir().join("activity"));
     let agent = activity::agent(&sessions, now_ms(), *state.activity_seen.lock().unwrap());
-    // Only macOS draws the turning ring (Linux and Windows show text).
-    state.animating.store(cfg!(target_os = "macos") && agent.0 == menubar::Agent::Working && cfg.items.iter().any(|i| i == "agent"), std::sync::atomic::Ordering::Relaxed);
+    *state.agent_now.lock().unwrap() = agent;
     let fresh = state.last_sample.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_millis(1800));
     let mut values = menubar::Values {
         agent,
@@ -769,7 +772,15 @@ fn draw_menubar(app: &AppHandle) {
             let mut sampler = state.sampler.lock().unwrap();
             let mut s = sampler.sample();
             if cfg.items.iter().any(|i| i == "temp") {
-                s.cpu_temp = sampler.cpu_temp();
+                let mut t = state.temp.lock().unwrap();
+                s.cpu_temp = match *t {
+                    Some((at, c)) if at.elapsed() < Duration::from_secs(15) => c,
+                    _ => {
+                        let c = sampler.cpu_temp();
+                        *t = Some((std::time::Instant::now(), c));
+                        c
+                    }
+                };
             }
             *state.last_stats.lock().unwrap() = s.clone();
             record(&state, &s);
@@ -780,6 +791,11 @@ fn draw_menubar(app: &AppHandle) {
         now: chrono::Local::now().naive_local(),
         battery_anim: 0,
     };
+    // Only macOS draws the turning ring (Linux and Windows show text). On battery power it moves
+    // only with the 2-second redraw: a ring turning several times a second for a long task cost
+    // a lot of battery.
+    let on_battery = values.stats.battery.is_some() && !values.stats.charging;
+    state.animating.store(cfg!(target_os = "macos") && agent.0 == menubar::Agent::Working && !on_battery && cfg.items.iter().any(|i| i == "agent"), std::sync::atomic::Ordering::Relaxed);
     // Charger plugged in or unplugged: a short animation on the battery-in-icon item.
     if values.stats.battery.is_some() {
         let mut b = state.battery_change.lock().unwrap();
@@ -855,6 +871,11 @@ fn draw_menubar(app: &AppHandle) {
     let _ = app.run_on_main_thread(move || apply_menubar(&app2, &want, drawn, tip));
 }
 
+/// Time between frames while the ring turns or the charger animates: about 4 a second. The ring's
+/// position follows the clock, so it turns at the same speed, in bigger steps; 12 frames a second
+/// kept the Mac busy for as long as an agent worked.
+const FRAME_MS: u64 = 250;
+
 /// Between full redraws while the ring turns: redraws only the Agent status item (separate items on
 /// macOS). Redrawing every item 20 times a second cost ~12% CPU. False when a full redraw is needed.
 fn draw_ring(app: &AppHandle) -> bool {
@@ -863,8 +884,7 @@ fn draw_ring(app: &AppHandle) -> bool {
     if !cfg!(target_os = "macos") || cfg.combined || !cfg.items.iter().any(|i| i == "agent") || state.battery_moving.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
-    let sessions = activity::read(&agent_dir().join("activity"));
-    let agent = activity::agent(&sessions, now_ms(), *state.activity_seen.lock().unwrap());
+    let agent = *state.agent_now.lock().unwrap();
     if agent.0 != menubar::Agent::Working {
         return false;
     }
@@ -2106,6 +2126,8 @@ pub fn run() {
                 disk_alerted: Mutex::new(0),
                 device_alerted: Mutex::new(None),
                 animating: std::sync::atomic::AtomicBool::new(false),
+                agent_now: Mutex::new((menubar::Agent::Idle, 0)),
+                temp: Mutex::new(None),
                 card_id: std::sync::atomic::AtomicI64::new(0),
                 last_sample: Mutex::new(None),
                 tray_items: Mutex::new(vec![]),
@@ -2198,16 +2220,16 @@ pub fn run() {
             if std::env::var("DEVICETALLY_OPEN_WINDOW").is_ok() {
                 let _ = show_main(&handle, "overview");
             }
-            // Connectivity checks every 2 s while a Network item is in the menu bar or its panel was
-            // looked at in the last 15 s (one small connection to 1.1.1.1, like Stats).
+            // Connectivity checks every 2 s while the Network panel was looked at in the last 15 s (one
+            // small connection to 1.1.1.1, like Stats). Only the panel shows them; checking all day
+            // for the menu-bar item kept Wi-Fi from resting.
             let h4 = handle.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
                     let st = h4.state::<AppState>();
-                    let shown = st.config.lock().unwrap().menubar.items.iter().any(|i| i == "net");
                     let looked = st.net_wanted.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_secs(15));
-                    if shown || looked {
+                    if looked {
                         let r = tokio::task::spawn_blocking(net::probe).await.ok().flatten();
                         st.connectivity.lock().unwrap().push(r);
                     }
@@ -2228,7 +2250,7 @@ pub fn run() {
                 let mut last_full = std::time::Instant::now();
                 loop {
                     let fast = h2.state::<AppState>().animating.load(std::sync::atomic::Ordering::Relaxed);
-                    tokio::time::sleep(Duration::from_millis(if fast { menubar::RING_MS } else { 2000 })).await;
+                    tokio::time::sleep(Duration::from_millis(if fast { FRAME_MS } else { 2000 })).await;
                     // Everything every 2 s; in between only the turning ring.
                     if !fast || last_full.elapsed() >= Duration::from_secs(2) || !draw_ring(&h2) {
                         draw_menubar(&h2);

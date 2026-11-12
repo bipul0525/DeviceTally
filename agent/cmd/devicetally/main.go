@@ -104,7 +104,7 @@ func hook() {
 	var h activity.Hook
 	json.Unmarshal(b, &h)
 	activity.Record(activity.Dir(state.Dir()), h, time.Now().UnixMilli())
-	if in.Event == "Notification" || local.On() {
+	if in.Event == "Notification" || in.Event == "PermissionRequest" || local.On() {
 		return // local mode: nothing to upload; usage is read from the transcripts directly
 	}
 	if in.Event == "UserPromptSubmit" {
