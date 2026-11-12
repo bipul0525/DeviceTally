@@ -1,5 +1,5 @@
 import { SELF, env } from 'cloudflare:test'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nightly } from '../src/nightly'
 import type { Batch, TurnIn } from '../src/ingest'
 
@@ -258,6 +258,9 @@ describe('nightly', () => {
 })
 
 describe('dashboard API', () => {
+  // The seeded usage is from T0; "this month" and "last 30 days" are read on that day, not today.
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'], now: T0 + 6 * 3600_000 }) })
+  afterEach(() => { vi.useRealTimers() })
   async function seeded() {
     const cookie = await owner()
     const key = await device(cookie, 'Dash PC')
